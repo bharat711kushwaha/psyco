@@ -1,150 +1,86 @@
+
 const express = require('express');
-const bodyParser = require('body-parser');
+const mongoose = require('mongoose');
 const cors = require('cors');
-const process = require('process');
-require('dotenv').config();
+const dotenv = require('dotenv');
+const authRoutes = require('./routes/auth');
+const journalRoutes = require('./routes/journal');
+const meditationRoutes = require('./routes/meditation');
+const moodRoutes = require('./routes/mood');
+const chatRoutes = require('./routes/chat');
+const communityRoutes = require('./routes/community');
+const toolsRoutes = require('./routes/tools');
+const sleepRoutes = require('./routes/sleep');
+const therapyRoutes = require('./routes/therapy');
 
-class LangflowClient {
-    constructor(baseURL, applicationToken) {
-        this.baseURL = baseURL;
-        this.applicationToken = applicationToken;
-    }
-    /**
-     * Send a POST request to the given endpoint with the given body.
-     *
-     * @param {string} endpoint - The endpoint to send the request to.
-     * @param {Object} body - The body of the request.
-     * @param {Object} [headers={ "Content-Type": "application/json" }] - The headers for the request.
-     * @returns {Promise<Object>} - A promise that resolves with the JSON response from the server.
-     * @throws {Error} - If there is an error with the request.
-    **/
-    async post(endpoint, body, headers = { "Content-Type": "application/json" }) {
-        headers["Authorization"] = `Bearer ${this.applicationToken}`;
-        headers["Content-Type"] = "application/json";
-        const url = `${this.baseURL}${endpoint}`;
-        try {
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: headers,
-                body: JSON.stringify(body),
-            });
+// Load environment variables
+dotenv.config();
 
-            const responseMessage = await response.json();
-            if (!response.ok) {
-                throw new Error(`${response.status} ${response.statusText} - ${JSON.stringify(responseMessage)}`);
-            }
-            return responseMessage;
-        } catch (error) {
-            console.error('Request Error:', error.message);
-            throw error;
-        }
-    }
+// Check critical environment variables
+if (!process.env.MONGODB_URL || !process.env.JWT_SECRET) {
+  console.error('Error: Missing required environment variables');
+  process.exit(1);
+}
 
-    async initiateSession(flowId, langflowId, inputValue, inputType = 'chat', outputType = 'chat', stream = false, tweaks = {}) {
-        const endpoint = `/lf/${langflowId}/api/v1/run/${flowId}?stream=${stream}`;
-        return this.post(endpoint, { input_value: inputValue, input_type: inputType, output_type: outputType, tweaks: tweaks });
-    }
-
-    handleStream(streamUrl, onUpdate, onClose, onError) {
-        const eventSource = new EventSource(streamUrl);
-
-        eventSource.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            onUpdate(data);
-        };
-
-        eventSource.onerror = (event) => {
-            console.error('Stream Error:', event);
-            onError(event);
-            eventSource.close();
-        };
-
-        eventSource.addEventListener('close', () => {
-            onClose('Stream closed');
-            eventSource.close();
-        });
-
-        return eventSource;
-    }
-
-    async runFlow(flowIdOrName, langflowId, inputValue, inputType = 'chat', outputType = 'chat', tweaks = {}, stream = false, onUpdate, onClose, onError) {
-        try {
-            const initResponse = await this.initiateSession(flowIdOrName, langflowId, inputValue, inputType, outputType, stream, tweaks);
-            console.log('Init Response:', initResponse);
-            if (stream && initResponse && initResponse.outputs && initResponse.outputs[0].outputs[0].artifacts.stream_url) {
-                const streamUrl = initResponse.outputs[0].outputs[0].artifacts.stream_url;
-                console.log(`Streaming from: ${streamUrl}`);
-                this.handleStream(streamUrl, onUpdate, onClose, onError);
-            }
-            return initResponse;
-        } catch (error) {
-            console.error('Error running flow:', error);
-            onError('Error initiating session');
-        }
-    }
+if (!process.env.GEMINI_API_KEY) {
+  console.warn('Warning: GEMINI_API_KEY not set. Chat and tools will use fallback responses.');
 }
 
 const app = express();
-// const corsOptions ={
-//     origin:'*', 
-//     credentials:true,            //access-control-allow-credentials:true
-//     optionSuccessStatus:200,
-//  }
-//  app.use(cors(corsOptions)) 
-app.use(cors());
-app.use(bodyParser.json());
+const PORT = process.env.PORT || 5000;
 
-const PORT = 3000 || process.env.PORT;
-const flowIdOrName = '9510d492-a745-4be6-bc78-e8a9b24f0b69';
-const langflowId = '0e9b6352-6f2b-41af-a799-34d5f8ee1c7a';
-const applicationToken = process.env.LANGFLOW_APPLICATION_TOKEN;
+// Middleware
+app.use(express.json());
 
-const langflowClient = new LangflowClient('https://api.langflow.astra.datastax.com', applicationToken);
+// Configure CORS with more permissive settings for development
+app.use(cors({
+  origin: ['http://localhost:8080', 'http://192.168.41.147:8080', 'http://localhost:5173'], // Added port 5173 for Vite dev server
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'x-auth-token', 'Authorization'],
+  credentials: true // Allow cookies to be sent with requests
+ 
+}));
 
-// Endpoint to run the flow
-app.post('/runFlow', async (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    const { inputValue, inputType = 'chat', outputType = 'chat', stream = false, tweaks = {} } = req.body;
-    console.log('Input:', inputValue);
+// Connect to MongoDB
+mongoose.connect(process.env.MONGODB_URL)
+  .then(() => console.log('Connected to MongoDB'))
+  .catch(err => console.error('MongoDB connection error:', err));
 
-    try {
-        const response = await langflowClient.runFlow(
-            flowIdOrName,
-            langflowId,
-            inputValue,
-            inputType,
-            outputType,
-            tweaks,
-            stream,
-            (data) => console.log('Received:', data.chunk), // onUpdate
-            (message) => console.log('Stream Closed:', message), // onClose
-            (error) => console.error('Stream Error:', error) // onError
-        );
-
-        if (!stream && response && response.outputs) {
-            const flowOutputs = response.outputs[0];
-            const firstComponentOutputs = flowOutputs.outputs[0];
-            const output = firstComponentOutputs.outputs.message;
-
-            // console.log('Output:', output);
-
-            res.status(200).json({ message: output.message.text });
-        } else {
-            res.status(200).json(response);
-        }
-    } catch (error) {
-        console.error('Error:', error.message);
-        res.status(500).json({ error: error.message });
-    }
+// Debug routes for troubleshooting
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.url}`);
+  next();
 });
 
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/journal', journalRoutes);
+app.use('/api/meditation', meditationRoutes);
+app.use('/api/mood', moodRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/community', communityRoutes);
+app.use('/api/tools', toolsRoutes);
+app.use('/api/sleep', sleepRoutes);
+app.use('/api/therapy', therapyRoutes);
+
+// Health check route
 app.get('/health', (req, res) => {
-    console.log('Health Check');
-    res.send('Server is UP and running');
+  res.status(200).json({ status: 'ok', message: 'Server is running' });
 });
 
+// Test route for checking server connectivity
+app.get('/api/test', (req, res) => {
+  res.status(200).json({ message: 'API server is running and accessible' });
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Server error:', err.stack);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+// Start the server
 app.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
+  console.log(`Server running on port ${PORT}`);
+  console.log(`API available at http://localhost:${PORT}/api`);
 });
