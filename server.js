@@ -34,7 +34,7 @@ app.use(express.json());
 
 // Configure CORS with more permissive settings for development
 app.use(cors({
-  origin: ['http://localhost:8080', 'http://192.168.41.147:8080', 'http://localhost:5173'], // Added port 5173 for Vite dev server
+  origin: ['http://localhost:8080', 'http://192.168.41.147:8080', 'https://psyc-frontend.vercel.app/','http://localhost:5173'], // Added port 5173 for Vite dev server
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'x-auth-token', 'Authorization'],
   credentials: true // Allow cookies to be sent with requests
